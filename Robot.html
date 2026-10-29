@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulated Embodied Robot</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f4f8;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+
+    h1 {
+      color: #1f2937;
+    }
+
+    .container {
+      display: inline-block;
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    canvas {
+      border: 3px solid #1f2937;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .controls {
+      margin-top: 15px;
+    }
+
+    button {
+      padding: 10px 18px;
+      margin: 5px;
+      font-size: 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    #status {
+      margin-top: 15px;
+      font-size: 16px;
+      color: #111827;
+      text-align: left;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .collision-yes {
+      color: red;
+      font-weight: bold;
+    }
+
+    .collision-no {
+      color: green;
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>Simulated Embodied Robot</h1>
+
+  <div class="container">
+    <canvas id="robotCanvas" width="600" height="600"></canvas>
+
+    <div class="controls">
+      <button id="startButton">▶ Start</button>
+      <button id="stopButton">⏹ Stop</button>
+      <button id="resetButton">🔄 Reset</button>
+    </div>
+
+    <div id="status">
+      <p><strong>Position:</strong> <span id="position">--</span></p>
+      <p><strong>Heading:</strong> <span id="heading">--</span></p>
+      <p><strong>Forward sensor distance:</strong> <span id="sensor">--</span></p>
+      <p><strong>Current action:</strong> <span id="action">--</span></p>
+      <p><strong>Collision:</strong> <span id="collision">--</span></p>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("robotCanvas");
+    const context = canvas.getContext("2d");
+
+    const startButton = document.getElementById("startButton");
+    const stopButton = document.getElementById("stopButton");
+    const resetButton = document.getElementById("resetButton");
+
+    const positionLabel = document.getElementById("position");
+    const headingLabel = document.getElementById("heading");
+    const sensorLabel = document.getElementById("sensor");
+    const actionLabel = document.getElementById("action");
+    const collisionLabel = document.getElementById("collision");
+
+    const ROOM_WIDTH = 600;
+    const ROOM_HEIGHT = 600;
+
+    const obstacles = [
+      { x: 300, y: 300, radius: 30 },
+      { x: 150, y: 450, radius: 25 },
+      { x: 450, y: 150, radius: 25 }
+    ];
+
+    let robot;
+    let simulationRunning = false;
+    let simulationTimer = null;
+
+    function createRobot() {
+      return {
+        x: 60,
+        y: 60,
+        heading: 45,
+        speed: 3,
+        turnAngle: 25,
+        safeDistance: 100,
+        veryCloseDistance: 40,
+        action: "FORWARD",
+        collision: false
+      };
+    }
+
+    function senseDistance(x, y, heading) {
+      const maxRange = 150;
+      const step = 5;
+
+      const radians = heading * Math.PI / 180;
+      const dx = Math.cos(radians);
+      const dy = Math.sin(radians);
+
+      let distance = 0;
+
+      while (distance < maxRange) {
+        distance += step;
+
+        const sensorX = x + dx * distance;
+        const sensorY = y + dy * distance;
+
+        if (sensorX <= 0 || sensorX >= ROOM_WIDTH) {
+          return distance;
+        }
+
+        if (sensorY <= 0 || sensorY >= ROOM_HEIGHT) {
+          return distance;
+        }
+
+        for (const obstacle of obstacles) {
+          const distanceToObstacle = Math.hypot(
+            sensorX - obstacle.x,
+            sensorY - obstacle.y
+          );
+
+          if (distanceToObstacle < obstacle.radius) {
+            return distance;
+          }
+        }
+      }
+
+      return maxRange;
+    }
+
+    function hasCollided(x, y) {
+      if (x <= 20 || x >= ROOM_WIDTH - 20) {
+        return true;
+      }
+
+      if (y <= 20 || y >= ROOM_HEIGHT - 20) {
+        return true;
+      }
+
+      for (const obstacle of obstacles) {
+        const distanceToObstacle = Math.hypot(
+          x - obstacle.x,
+          y - obstacle.y
+        );
+
+        if (distanceToObstacle < obstacle.radius + 20) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    function decide(forwardDistance) {
+      if (forwardDistance < robot.veryCloseDistance) {
+        return "BACK_UP";
+      }
+
+      if (forwardDistance < robot.safeDistance) {
+        const leftDistance = senseDistance(
+          robot.x,
+          robot.y,
+          robot.heading + robot.turnAngle
+        );
+
+        const rightDistance = senseDistance(
+          robot.x,
+          robot.y,
+          robot.heading - robot.turnAngle
+        );
+
+        if (leftDistance > rightDistance) {
+          return "TURN_LEFT";
+        } else {
+          return "TURN_RIGHT";
+        }
+      }
+
+      return "FORWARD";
+    }
+
+    function act(action) {
+      const radians = robot.heading * Math.PI / 180;
+
+      if (action === "FORWARD") {
+        robot.x += Math.cos(radians) * robot.speed;
+        robot.y += Math.sin(radians) * robot.speed;
+      }
+
+      else if (action === "TURN_LEFT") {
+        robot.heading += robot.turnAngle;
+      }
+
+      else if (action === "TURN_RIGHT") {
+        robot.heading -= robot.turnAngle;
+      }
+
+      else if (action === "BACK_UP") {
+        robot.x -= Math.cos(radians) * robot.speed;
+        robot.y -= Math.sin(radians) * robot.speed;
+      }
+
+      robot.action = action;
+    }
+
+    function drawRoom() {
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, ROOM_WIDTH, ROOM_HEIGHT);
+
+      for (const obstacle of obstacles) {
+        context.beginPath();
+        context.arc(
+          obstacle.x,
+          obstacle.y,
+          obstacle.radius,
+          0,
+          Math.PI * 2
+        );
+
+        context.fillStyle = "#E6E6FA";
+        context.fill();
+        context.strokeStyle = "#9370DB";
+        context.lineWidth = 3;
+        context.stroke();
+      }
+    }
+
+    function drawRobot() {
+      const radians = robot.heading * Math.PI / 180;
+
+      context.save();
+      context.translate(robot.x, robot.y);
+      context.rotate(radians);
+
+      context.fillStyle = "#2563eb";
+      context.strokeStyle = "#1e3a8a";
+      context.lineWidth = 3;
+
+      context.beginPath();
+      context.roundRect(-22, -16, 44, 32, 8);
+      context.fill();
+      context.stroke();
+
+      context.fillStyle = "#111827";
+
+      context.beginPath();
+      context.roundRect(-18, -24, 12, 8, 3);
+      context.fill();
+
+      context.beginPath();
+      context.roundRect(6, -24, 12, 8, 3);
+      context.fill();
+
+      context.beginPath();
+      context.roundRect(-18, 16, 12, 8, 3);
+      context.fill();
+
+      context.beginPath();
+      context.roundRect(6, 16, 12, 8, 3);
+      context.fill();
+
+      context.fillStyle = "#1e3a8a";
+      context.beginPath();
+      context.roundRect(10, -10, 16, 20, 5);
+      context.fill();
+
+      context.fillStyle = "#ffffff";
+
+      context.beginPath();
+      context.arc(18, -4, 2.5, 0, Math.PI * 2);
+      context.fill();
+
+      context.beginPath();
+      context.arc(18, 4, 2.5, 0, Math.PI * 2);
+      context.fill();
+
+      context.strokeStyle = "#ef4444";
+      context.lineWidth = 3;
+
+      context.beginPath();
+      context.moveTo(-10, 0);
+      context.lineTo(-22, 0);
+      context.stroke();
+
+      context.beginPath();
+      context.arc(-24, 0, 4, 0, Math.PI * 2);
+      context.fillStyle = "#ef4444";
+      context.fill();
+
+      context.restore();
+    }
+
+    function updateStatus(forwardDistance) {
+      positionLabel.textContent =
+        `X: ${robot.x.toFixed(1)}, Y: ${robot.y.toFixed(1)}`;
+
+      headingLabel.textContent = `${robot.heading.toFixed(0)} degrees`;
+      sensorLabel.textContent = `${forwardDistance.toFixed(0)} pixels`;
+      actionLabel.textContent = robot.action;
+
+      // Dynamic collision display
+      if (robot.collision) {
+        collisionLabel.textContent = "Yes";
+        collisionLabel.className = "collision-yes";
+      } else {
+        collisionLabel.textContent = "No";
+        collisionLabel.className = "collision-no";
+      }
+    }
+
+    function simulationStep() {
+      const forwardDistance = senseDistance(
+        robot.x,
+        robot.y,
+        robot.heading
+      );
+
+      const action = decide(forwardDistance);
+      act(action);
+
+      robot.collision = hasCollided(robot.x, robot.y);
+
+      drawRoom();
+      drawRobot();
+      updateStatus(forwardDistance);
+    }
+
+    function startSimulation() {
+      if (simulationRunning) {
+        return;
+      }
+
+      simulationRunning = true;
+      simulationTimer = setInterval(simulationStep, 100);
+    }
+
+    function stopSimulation() {
+      simulationRunning = false;
+      clearInterval(simulationTimer);
+    }
+
+    function resetSimulation() {
+      stopSimulation();
+      robot = createRobot();
+
+      drawRoom();
+      drawRobot();
+
+      positionLabel.textContent = "--";
+      headingLabel.textContent = "--";
+      sensorLabel.textContent = "--";
+      actionLabel.textContent = "--";
+
+      collisionLabel.textContent = "--";
+      collisionLabel.className = "";
+    }
+
+    startButton.addEventListener("click", startSimulation);
+    stopButton.addEventListener("click", stopSimulation);
+    resetButton.addEventListener("click", resetSimulation);
+
+    robot = createRobot();
+    drawRoom();
+    drawRobot();
+  </script>
+
+</body>
+</html>
